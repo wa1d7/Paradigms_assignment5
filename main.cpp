@@ -106,6 +106,74 @@ public:
         }
     }
 };
+
+class Parser {
+    std::vector<Token> tokens;
+    size_t pos;
+
+    const Token& current() const { return tokens[pos]; }
+
+    void consume(TokenType type) {
+        if (current().type == type) pos++;
+        else throw std::runtime_error("unexpected token");
+    }
+
+    std::unique_ptr<ASTNode> parseFactor() {
+        if (current().type == TokenType::Number) {
+            double val = current().value;
+            consume(TokenType::Number);
+            return std::make_unique<NumberNode>(val);
+        } else if (current().type == TokenType::LParen) {
+            consume(TokenType::LParen);
+            std::unique_ptr<ASTNode> node = parseExpr();
+            consume(TokenType::RParen);
+            return node;
+        } else if (current().type == TokenType::Minus) {
+            consume(TokenType::Minus);
+            std::unique_ptr<ASTNode> node = parseFactor();
+            return std::make_unique<BinaryOpNode>(
+                TokenType::Minus,
+                std::make_unique<NumberNode>(0.0),
+                std::move(node)
+            );
+        }
+        throw std::runtime_error("syntax error");
+    }
+
+    std::unique_ptr<ASTNode> parseTerm() {
+        std::unique_ptr<ASTNode> node = parseFactor();
+        while (current().type == TokenType::Multiply || current().type == TokenType::Divide) {
+            TokenType op = current().type;
+            consume(op);
+            std::unique_ptr<ASTNode> right = parseFactor();
+            node = std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
+        }
+        return node;
+    }
+
+    std::unique_ptr<ASTNode> parseExpr() {
+        std::unique_ptr<ASTNode> node = parseTerm();
+        while (current().type == TokenType::Plus || current().type == TokenType::Minus) {
+            TokenType op = current().type;
+            consume(op);
+            std::unique_ptr<ASTNode> right = parseTerm();
+            node = std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
+        }
+        return node;
+    }
+
+public:
+    Parser(const std::vector<Token>& tokens) : tokens(tokens), pos(0) {}
+
+    std::unique_ptr<ASTNode> parse() {
+        if (current().type == TokenType::EndOfFile) return nullptr;
+        std::unique_ptr<ASTNode> ast = parseExpr();
+        if (current().type != TokenType::EndOfFile) {
+            throw std::runtime_error("syntax error at the end");
+        }
+        return ast;
+    }
+};
 int main() {
     std::string input;
 
