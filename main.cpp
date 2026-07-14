@@ -6,10 +6,11 @@
 #include <memory>
 #include <cmath>
 #include <algorithm>
+#include <unordered_map>
 
 enum class TokenType {
     Number, Plus, Minus, Multiply, Divide, LParen, RParen, EndOfFile,
-    Identifier, Comma
+    Identifier, Comma, Var, Equals
 };
 
 struct Token {
@@ -46,6 +47,7 @@ public:
             while (std::isalnum(peek()) || peek() == '_') {
                 idStr += get();
             }
+            if (idStr == "var") return {TokenType::Var, 0, "var"};
             return {TokenType::Identifier, 0, idStr};
         }
 
@@ -65,6 +67,7 @@ public:
             case '(': get(); return {TokenType::LParen, 0, "("};
             case ')': get(); return {TokenType::RParen, 0, ")"};
             case ',': get(); return {TokenType::Comma, 0, ","};
+            case '=': get(); return {TokenType::Equals, 0, "="};
             default:
                 throw std::runtime_error(std::string("unknown character: ") + c);
         }
@@ -81,7 +84,24 @@ public:
         return tokens;
     }
 };
+class Environment {
+    std::unordered_map<std::string, double> vars;
+public:
+    void defineVar(const std::string& name, double value) {
+        if (vars.find(name) != vars.end()) {
+            throw std::runtime_error("variable already declared: " + name);
+        }
+        vars[name] = value;
+    }
 
+    double getVar(const std::string& name) const {
+        std::unordered_map<std::string, double>::const_iterator it = vars.find(name);
+        if (it == vars.end()) {
+            throw std::runtime_error("undefined variable: " + name);
+        }
+        return it->second;
+    }
+};
 class ASTNode {
 public:
     virtual ~ASTNode() = default;
