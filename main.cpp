@@ -4,8 +4,10 @@
 #include <cctype>
 #include <stdexcept>
 #include <memory>
+
 enum class TokenType {
-    Number, Plus, Minus, Multiply, Divide, LParen, RParen, EndOfFile
+    Number, Plus, Minus, Multiply, Divide, LParen, RParen, EndOfFile,
+    Identifier, Comma
 };
 
 struct Token {
@@ -37,6 +39,14 @@ public:
         char c = peek();
         if (c == '\0') return {TokenType::EndOfFile};
 
+        if (std::isalpha(c)) {
+            std::string idStr;
+            while (std::isalnum(peek()) || peek() == '_') {
+                idStr += get();
+            }
+            return {TokenType::Identifier, 0, idStr};
+        }
+
         if (std::isdigit(c) || c == '.') {
             std::string numStr;
             while (std::isdigit(peek()) || peek() == '.') {
@@ -52,6 +62,7 @@ public:
             case '/': get(); return {TokenType::Divide, 0, "/"};
             case '(': get(); return {TokenType::LParen, 0, "("};
             case ')': get(); return {TokenType::RParen, 0, ")"};
+            case ',': get(); return {TokenType::Comma, 0, ","};
             default:
                 throw std::runtime_error(std::string("unknown character: ") + c);
         }
