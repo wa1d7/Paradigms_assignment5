@@ -4,6 +4,8 @@
 #include <cctype>
 #include <stdexcept>
 #include <memory>
+#include <cmath>
+#include <algorithm>
 
 enum class TokenType {
     Number, Plus, Minus, Multiply, Divide, LParen, RParen, EndOfFile,
@@ -117,7 +119,30 @@ public:
         }
     }
 };
+class BuiltinFuncNode : public ASTNode {
+    std::string name;
+    std::vector<std::unique_ptr<ASTNode>> args;
+public:
+    BuiltinFuncNode(const std::string& name, std::vector<std::unique_ptr<ASTNode>> args)
+        : name(name), args(std::move(args)) {}
 
+    double evaluate() const override {
+        if (name == "pow") {
+            if (args.size() != 2) throw std::runtime_error("pow takes 2 arguments");
+            return std::pow(args[0]->evaluate(), args[1]->evaluate());
+        } else if (name == "abs") {
+            if (args.size() != 1) throw std::runtime_error("abs takes 1 argument");
+            return std::abs(args[0]->evaluate());
+        } else if (name == "max") {
+            if (args.size() != 2) throw std::runtime_error("max takes 2 arguments");
+            return std::max(args[0]->evaluate(), args[1]->evaluate());
+        } else if (name == "min") {
+            if (args.size() != 2) throw std::runtime_error("min takes 2 arguments");
+            return std::min(args[0]->evaluate(), args[1]->evaluate());
+        }
+        throw std::runtime_error("unknown built-in function: " + name);
+    }
+};
 class Parser {
     std::vector<Token> tokens;
     size_t pos;
@@ -134,6 +159,24 @@ class Parser {
             double val = current().value;
             consume(TokenType::Number);
             return std::make_unique<NumberNode>(val);
+        } else if (current().type == TokenType::Identifier) {
+            std::string name = current().text;
+            consume(TokenType::Identifier);
+
+            if (current().type == TokenType::LParen) {
+                consume(TokenType::LParen);
+                std::vector<std::unique_ptr<ASTNode>> args;
+                if (current().type != TokenType::RParen) {
+                    args.push_back(parseExpr());
+                    while (current().type == TokenType::Comma) {
+                        consume(TokenType::Comma);
+                        args.push_back(parseExpr());
+                    }
+                }
+                consume(TokenType::RParen);
+                return std::make_unique<BuiltinFuncNode>(name, std::move(args));
+            }
+            throw std::runtime_error("unexpected identifier: " + name);
         } else if (current().type == TokenType::LParen) {
             consume(TokenType::LParen);
             std::unique_ptr<ASTNode> node = parseExpr();
