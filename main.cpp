@@ -102,17 +102,41 @@ public:
         return it->second;
     }
 };
+// --- AST-УЗЛЫ ---
 class ASTNode {
 public:
     virtual ~ASTNode() = default;
-    virtual double evaluate() const = 0;
+    virtual double evaluate(Environment& env) const = 0;
 };
 
 class NumberNode : public ASTNode {
     double val;
 public:
     NumberNode(double v) : val(v) {}
-    double evaluate() const override { return val; }
+    double evaluate(Environment& env) const override { return val; }
+};
+
+class VariableNode : public ASTNode {
+    std::string name;
+public:
+    VariableNode(const std::string& name) : name(name) {}
+    double evaluate(Environment& env) const override {
+        return env.getVar(name);
+    }
+};
+
+class VarDeclNode : public ASTNode {
+    std::string name;
+    std::unique_ptr<ASTNode> expr;
+public:
+    VarDeclNode(const std::string& name, std::unique_ptr<ASTNode> expr)
+        : name(name), expr(std::move(expr)) {}
+
+    double evaluate(Environment& env) const override {
+        double value = expr->evaluate(env);
+        env.defineVar(name, value);
+        return value;
+    }
 };
 
 class BinaryOpNode : public ASTNode {
@@ -123,9 +147,9 @@ public:
     BinaryOpNode(TokenType op, std::unique_ptr<ASTNode> l, std::unique_ptr<ASTNode> r)
         : op(op), left(std::move(l)), right(std::move(r)) {}
 
-    double evaluate() const override {
-        double lval = left->evaluate();
-        double rval = right->evaluate();
+    double evaluate(Environment& env) const override {
+        double lval = left->evaluate(env);
+        double rval = right->evaluate(env);
 
         switch (op) {
             case TokenType::Plus: return lval + rval;
@@ -139,6 +163,7 @@ public:
         }
     }
 };
+
 class BuiltinFuncNode : public ASTNode {
     std::string name;
     std::vector<std::unique_ptr<ASTNode>> args;
@@ -146,23 +171,24 @@ public:
     BuiltinFuncNode(const std::string& name, std::vector<std::unique_ptr<ASTNode>> args)
         : name(name), args(std::move(args)) {}
 
-    double evaluate() const override {
+    double evaluate(Environment& env) const override {
         if (name == "pow") {
             if (args.size() != 2) throw std::runtime_error("pow takes 2 arguments");
-            return std::pow(args[0]->evaluate(), args[1]->evaluate());
+            return std::pow(args[0]->evaluate(env), args[1]->evaluate(env));
         } else if (name == "abs") {
             if (args.size() != 1) throw std::runtime_error("abs takes 1 argument");
-            return std::abs(args[0]->evaluate());
+            return std::abs(args[0]->evaluate(env));
         } else if (name == "max") {
             if (args.size() != 2) throw std::runtime_error("max takes 2 arguments");
-            return std::max(args[0]->evaluate(), args[1]->evaluate());
+            return std::max(args[0]->evaluate(env), args[1]->evaluate(env));
         } else if (name == "min") {
             if (args.size() != 2) throw std::runtime_error("min takes 2 arguments");
-            return std::min(args[0]->evaluate(), args[1]->evaluate());
+            return std::min(args[0]->evaluate(env), args[1]->evaluate(env));
         }
         throw std::runtime_error("unknown built-in function: " + name);
     }
 };
+
 class Parser {
     std::vector<Token> tokens;
     size_t pos;
@@ -196,7 +222,9 @@ class Parser {
                 consume(TokenType::RParen);
                 return std::make_unique<BuiltinFuncNode>(name, std::move(args));
             }
-            throw std::runtime_error("unexpected identifier: " + name);
+
+            return std::make_unique<VariableNode>(name);
+
         } else if (current().type == TokenType::LParen) {
             consume(TokenType::LParen);
             std::unique_ptr<ASTNode> node = parseExpr();
@@ -241,15 +269,32 @@ public:
 
     std::unique_ptr<ASTNode> parse() {
         if (current().type == TokenType::EndOfFile) return nullptr;
-        std::unique_ptr<ASTNode> ast = parseExpr();
+
+        std::unique_ptr<ASTNode> ast;
+
+        if (current().type == TokenType::Var) {
+            consume(TokenType::Var);
+            if (current().type != TokenType::Identifier) {
+                throw std::runtime_error("expected identifier after 'var'");
+            }
+            std::string varName = current().text;
+            consume(TokenType::Identifier);
+            consume(TokenType::Equals);
+            std::unique_ptr<ASTNode> expr = parseExpr();
+            ast = std::make_unique<VarDeclNode>(varName, std::move(expr));
+        } else {
+            ast = parseExpr();
+        }
+
         if (current().type != TokenType::EndOfFile) {
-            throw std::runtime_error("syntax error at the end");
+            throw std::runtime_error("syntax error at the end of expression");
         }
         return ast;
     }
 };
 int main() {
     std::string input;
+    Environment env;
 
     while (std::getline(std::cin, input)) {
         if (input == "exit" || input == "quit") {
@@ -267,7 +312,12 @@ int main() {
             std::unique_ptr<ASTNode> ast = parser.parse();
 
             if (ast) {
-                std::cout << ast->evaluate() << std::endl;
+                double result = ast->evaluate(env);
+
+                VarDeclNode* declNode = dynamic_cast<VarDeclNode*>(ast.get());
+                if (declNode == nullptr) {
+                    std::cout << result << std::endl;
+                }
             }
         } catch (const std::exception& e) {
             std::cout << "error: " << e.what() << std::endl;
