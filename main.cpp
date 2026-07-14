@@ -185,7 +185,19 @@ int main() {
             continue;
         }
 
-        // TODO
+        try {
+            Lexer lexer(input);
+            std::vector<Token> tokens = lexer.tokenize();
+
+            Parser parser(tokens);
+            std::unique_ptr<ASTNode> ast = parser.parse();
+
+            if (ast) {
+                std::cout << ast->evaluate() << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cout << "error: " << e.what() << std::endl;
+        }
     }
 
     return 0;
