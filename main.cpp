@@ -10,7 +10,7 @@
 
 enum class TokenType {
     Number, Plus, Minus, Multiply, Divide, LParen, RParen, EndOfFile,
-    Identifier, Comma, Var, Equals
+    Identifier, Comma, Var, Equals, Def, LBrace, RBrace
 };
 
 struct Token {
@@ -48,6 +48,7 @@ public:
                 idStr += get();
             }
             if (idStr == "var") return {TokenType::Var, 0, "var"};
+            if (idStr == "def") return {TokenType::Def, 0, "def"};
             return {TokenType::Identifier, 0, idStr};
         }
 
@@ -66,6 +67,8 @@ public:
             case '/': get(); return {TokenType::Divide, 0, "/"};
             case '(': get(); return {TokenType::LParen, 0, "("};
             case ')': get(); return {TokenType::RParen, 0, ")"};
+            case '{': get(); return {TokenType::LBrace, 0, "{"};
+            case '}': get(); return {TokenType::RBrace, 0, "}"};
             case ',': get(); return {TokenType::Comma, 0, ","};
             case '=': get(); return {TokenType::Equals, 0, "="};
             default:
@@ -84,9 +87,28 @@ public:
         return tokens;
     }
 };
+class Environment;
+
+// --- AST-БАЗА ---
+class ASTNode {
+public:
+    virtual ~ASTNode() = default;
+    virtual double evaluate(Environment& env) const = 0;
+};
+
+struct FunctionDef {
+    std::vector<std::string> params;
+    std::shared_ptr<ASTNode> body;
+};
+
+
 class Environment {
     std::unordered_map<std::string, double> vars;
+    std::unordered_map<std::string, FunctionDef> funcs;
+    Environment* parent;
 public:
+    Environment(Environment* parent = nullptr) : parent(parent) {}
+
     void defineVar(const std::string& name, double value) {
         if (vars.find(name) != vars.end()) {
             throw std::runtime_error("variable already declared: " + name);
@@ -96,17 +118,21 @@ public:
 
     double getVar(const std::string& name) const {
         std::unordered_map<std::string, double>::const_iterator it = vars.find(name);
-        if (it == vars.end()) {
-            throw std::runtime_error("undefined variable: " + name);
-        }
-        return it->second;
+        if (it != vars.end()) return it->second;
+        if (parent != nullptr) return parent->getVar(name);
+        throw std::runtime_error("undefined variable: " + name);
     }
-};
-// --- AST-УЗЛЫ ---
-class ASTNode {
-public:
-    virtual ~ASTNode() = default;
-    virtual double evaluate(Environment& env) const = 0;
+
+    void defineFunc(const std::string& name, const FunctionDef& def) {
+        funcs[name] = def;
+    }
+
+    FunctionDef getFunc(const std::string& name) const {
+        std::unordered_map<std::string, FunctionDef>::const_iterator it = funcs.find(name);
+        if (it != funcs.end()) return it->second;
+        if (parent != nullptr) return parent->getFunc(name);
+        throw std::runtime_error("undefined function: " + name);
+    }
 };
 
 class NumberNode : public ASTNode {
@@ -164,11 +190,11 @@ public:
     }
 };
 
-class BuiltinFuncNode : public ASTNode {
+class FunctionCallNode : public ASTNode {
     std::string name;
     std::vector<std::unique_ptr<ASTNode>> args;
 public:
-    BuiltinFuncNode(const std::string& name, std::vector<std::unique_ptr<ASTNode>> args)
+    FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ASTNode>> args)
         : name(name), args(std::move(args)) {}
 
     double evaluate(Environment& env) const override {
@@ -185,7 +211,36 @@ public:
             if (args.size() != 2) throw std::runtime_error("min takes 2 arguments");
             return std::min(args[0]->evaluate(env), args[1]->evaluate(env));
         }
-        throw std::runtime_error("unknown built-in function: " + name);
+
+        FunctionDef def = env.getFunc(name);
+        if (args.size() != def.params.size()) {
+            throw std::runtime_error("argument count mismatch for function: " + name);
+        }
+
+        Environment localEnv(&env);
+        for (size_t i = 0; i < args.size(); ++i) {
+            double argVal = args[i]->evaluate(env);
+            localEnv.defineVar(def.params[i], argVal);
+        }
+
+        return def.body->evaluate(localEnv);
+    }
+};
+
+class FuncDeclNode : public ASTNode {
+    std::string name;
+    std::vector<std::string> params;
+    std::shared_ptr<ASTNode> body;
+public:
+    FuncDeclNode(const std::string& name, std::vector<std::string> params, std::shared_ptr<ASTNode> body)
+        : name(name), params(std::move(params)), body(std::move(body)) {}
+
+    double evaluate(Environment& env) const override {
+        FunctionDef def;
+        def.params = params;
+        def.body = body;
+        env.defineFunc(name, def);
+        return 0.0;
     }
 };
 
@@ -220,7 +275,7 @@ class Parser {
                     }
                 }
                 consume(TokenType::RParen);
-                return std::make_unique<BuiltinFuncNode>(name, std::move(args));
+                return std::make_unique<FunctionCallNode>(name, std::move(args));
             }
 
             return std::make_unique<VariableNode>(name);
@@ -282,16 +337,45 @@ public:
             consume(TokenType::Equals);
             std::unique_ptr<ASTNode> expr = parseExpr();
             ast = std::make_unique<VarDeclNode>(varName, std::move(expr));
+        } else if (current().type == TokenType::Def) {
+            consume(TokenType::Def);
+            if (current().type != TokenType::Identifier) {
+                throw std::runtime_error("expected function name");
+            }
+            std::string funcName = current().text;
+            consume(TokenType::Identifier);
+
+            consume(TokenType::LParen);
+            std::vector<std::string> params;
+            if (current().type != TokenType::RParen) {
+                if (current().type != TokenType::Identifier) throw std::runtime_error("expected parameter name");
+                params.push_back(current().text);
+                consume(TokenType::Identifier);
+                while (current().type == TokenType::Comma) {
+                    consume(TokenType::Comma);
+                    if (current().type != TokenType::Identifier) throw std::runtime_error("expected parameter name");
+                    params.push_back(current().text);
+                    consume(TokenType::Identifier);
+                }
+            }
+            consume(TokenType::RParen);
+
+            consume(TokenType::LBrace);
+            std::shared_ptr<ASTNode> body = parseExpr();
+            consume(TokenType::RBrace);
+
+            ast = std::make_unique<FuncDeclNode>(funcName, std::move(params), std::move(body));
         } else {
             ast = parseExpr();
         }
 
         if (current().type != TokenType::EndOfFile) {
-            throw std::runtime_error("syntax error at the end of expression");
+            throw std::runtime_error("syntax error at the end");
         }
         return ast;
     }
 };
+
 int main() {
     std::string input;
     Environment env;
@@ -314,8 +398,10 @@ int main() {
             if (ast) {
                 double result = ast->evaluate(env);
 
-                VarDeclNode* declNode = dynamic_cast<VarDeclNode*>(ast.get());
-                if (declNode == nullptr) {
+                VarDeclNode* varDecl = dynamic_cast<VarDeclNode*>(ast.get());
+                FuncDeclNode* funcDecl = dynamic_cast<FuncDeclNode*>(ast.get());
+
+                if (varDecl == nullptr && funcDecl == nullptr) {
                     std::cout << result << std::endl;
                 }
             }
