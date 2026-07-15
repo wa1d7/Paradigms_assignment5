@@ -89,11 +89,13 @@ public:
 };
 class Environment;
 
-// --- AST-БАЗА ---
+
 class ASTNode {
 public:
     virtual ~ASTNode() = default;
     virtual double evaluate(Environment& env) const = 0;
+
+    virtual std::string getName() const { return ""; }
 };
 
 struct FunctionDef {
@@ -146,8 +148,13 @@ class VariableNode : public ASTNode {
     std::string name;
 public:
     VariableNode(const std::string& name) : name(name) {}
+
     double evaluate(Environment& env) const override {
         return env.getVar(name);
+    }
+
+    std::string getName() const override {
+        return name;
     }
 };
 
@@ -198,6 +205,7 @@ public:
         : name(name), args(std::move(args)) {}
 
     double evaluate(Environment& env) const override {
+
         if (name == "pow") {
             if (args.size() != 2) throw std::runtime_error("pow takes 2 arguments");
             return std::pow(args[0]->evaluate(env), args[1]->evaluate(env));
@@ -210,6 +218,42 @@ public:
         } else if (name == "min") {
             if (args.size() != 2) throw std::runtime_error("min takes 2 arguments");
             return std::min(args[0]->evaluate(env), args[1]->evaluate(env));
+        }
+
+        else if (name == "sum" || name == "integral") {
+            if (args.size() != 3) throw std::runtime_error(name + " takes 3 arguments");
+
+            std::string funcName = args[0]->getName();
+            if (funcName.empty()) throw std::runtime_error("first argument must be a function name");
+
+            FunctionDef def = env.getFunc(funcName);
+            if (def.params.size() != 1) throw std::runtime_error(name + " requires a 1-argument function");
+
+            double a = args[1]->evaluate(env);
+            double b = args[2]->evaluate(env);
+
+            auto evalFunc = [&](double x) {
+                Environment localEnv(&env);
+                localEnv.defineVar(def.params[0], x);
+                return def.body->evaluate(localEnv);
+            };
+
+            if (name == "sum") {
+                double total = 0.0;
+                for (double i = a; i <= b; i += 1.0) {
+                    total += evalFunc(i);
+                }
+                return total;
+            } else {
+                int n = 1000;
+                double dx = (b - a) / n;
+                double total = (evalFunc(a) + evalFunc(b)) / 2.0;
+
+                for (int i = 1; i < n; ++i) {
+                    total += evalFunc(a + i * dx);
+                }
+                return total * dx;
+            }
         }
 
         FunctionDef def = env.getFunc(name);
